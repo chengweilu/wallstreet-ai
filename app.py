@@ -223,6 +223,7 @@ def get_stock_data(yf_ticker):
             'returnOnEquity', 'returnOnAssets', 'revenueGrowth', 'earningsGrowth',
             'totalDebt', 'totalCash', 'freeCashflow', 'currency', 'country',
             'targetMeanPrice', 'numberOfAnalystOpinions', 'recommendationKey',
+            'enterpriseValue', 'ebitda', 'forwardEps',
         ]:
             result[k] = info.get(k)
         # For TW stocks: prefer TWSE verified Chinese name over yfinance English name
@@ -302,6 +303,21 @@ def get_stock_data(yf_ticker):
 
 # ===== PROMPT =====
 
+def calc_data_completeness(d):
+    """Calculate data completeness score (0-100) based on key Yahoo Finance fields."""
+    checks = [
+        (d.get('currentPrice') or d.get('regularMarketPrice'), 20),
+        (d.get('trailingPE'), 10),
+        (d.get('grossMargins'), 10),
+        (d.get('operatingMargins'), 10),
+        (d.get('profitMargins'), 10),
+        (d.get('returnOnEquity'), 10),
+        (d.get('freeCashflow'), 10),
+        (bool(d.get('financials')), 20),
+    ]
+    return sum(weight for val, weight in checks if val)
+
+
 def build_annual_data_template(fin):
     """Build annual_data JSON array. Returns (data_str, source) tuple."""
     if fin:
@@ -330,10 +346,18 @@ def build_annual_data_template(fin):
     ), 'example_fallback'
 
 
+def _tag(val, fmt=''):
+    """Return ✅ if value exists, ⚠️ AI估算 if not."""
+    if val is None or val == 0 or val == 'N/A':
+        return '⚠️ AI估算'
+    return f"✅ {fmt}" if fmt else '✅'
+
+
 def build_prompt(ticker, market, d):
     is_tw = market == 'TW'
     fin = d.get('financials', [])
     data_note = d.get('_note', '')
+    completeness = calc_data_completeness(d)
 
     fin_lines = ""
     if fin:
@@ -362,9 +386,23 @@ def build_prompt(ticker, market, d):
     company_name = d.get('longName') or d.get('shortName') or ticker
     name_lock = f'【已核實】此分析標的為：{ticker}，公司名稱：{company_name}。整份報告的 company_name 欄位必須填入「{company_name}」，禁止替換為其他公司名稱。'
 
+    ev = d.get('enterpriseValue')
+    ebitda = d.get('ebitda')
+    ev_ebitda_val = round(ev / ebitda, 1) if ev and ebitda else None
+    ev_ebitda_str = f"{ev_ebitda_val}x" if ev_ebitda_val else 'N/A'
+
+    research_framework = f"""
+【三階段研究框架 - 必須遵守】
+① 數據區分：以下數據標記 ✅ 為 Yahoo Finance 已驗證數值，標記 ⚠️ AI估算 為缺失需自行估算
+② 魔鬼代言人：針對每個多頭論點，必須同時給出具體數據反駁（section5 的 bear_point 品質關鍵）
+③ 加權判斷：最終評級與目標價需整合 DCF、P/E、EV/EBITDA 三種方法加權後給出
+④ 數據完整度：本次 Yahoo Finance 數據完整度為 {completeness}/100，confidence_score 請勿超過此分數
+"""
+
     return f"""你是頂尖首席股票分析師，請分析 {ticker}（{company_name}）並回傳完整投資研究報告。
 
 {name_lock}
+{research_framework}
 {data_quality_note}
 ⚠️ 格式規則（必須遵守）：
 1. 只回傳純JSON，不含任何 ``` markdown 符號或其他說明文字
@@ -374,12 +412,13 @@ def build_prompt(ticker, market, d):
 5. 所有敘述性內容使用繁體中文
 6. company_name 必須是「{company_name}」，不得修改
 
-即時市場數據（部分可能為空，請依訓練知識補充）：
-- 股價: {cur_price}  |  市值: {fmt_num(d.get('marketCap'))}
+即時市場數據（✅=已驗證 ⚠️=需估算）：
+- 股價: {_tag(cur_price, cur_price)}  |  市值: {_tag(d.get('marketCap'), fmt_num(d.get('marketCap')))}
 - 產業: {d.get('sector','N/A')} / {d.get('industry','N/A')}  |  計價: {'TWD' if is_tw else 'USD'}
-- P/E: {d.get('trailingPE','N/A')}  |  P/B: {d.get('priceToBook','N/A')}
-- 毛利率: {(d.get('grossMargins') or 0)*100:.1f}%  |  營業利益率: {(d.get('operatingMargins') or 0)*100:.1f}%  |  淨利率: {(d.get('profitMargins') or 0)*100:.1f}%
-- ROE: {(d.get('returnOnEquity') or 0)*100:.1f}%  |  自由現金流: {fmt_num(d.get('freeCashflow'))}
+- P/E: {_tag(d.get('trailingPE'), d.get('trailingPE'))}  |  P/B: {_tag(d.get('priceToBook'), d.get('priceToBook'))}
+- 毛利率: {_tag(d.get('grossMargins'), f"{(d.get('grossMargins') or 0)*100:.1f}%")}  |  營業利益率: {_tag(d.get('operatingMargins'), f"{(d.get('operatingMargins') or 0)*100:.1f}%")}  |  淨利率: {_tag(d.get('profitMargins'), f"{(d.get('profitMargins') or 0)*100:.1f}%")}
+- ROE: {_tag(d.get('returnOnEquity'), f"{(d.get('returnOnEquity') or 0)*100:.1f}%")}  |  自由現金流: {_tag(d.get('freeCashflow'), fmt_num(d.get('freeCashflow')))}
+- EV: {_tag(ev, fmt_num(ev))}  |  EBITDA: {_tag(ebitda, fmt_num(ebitda))}  |  EV/EBITDA: {_tag(ev_ebitda_val, ev_ebitda_str)}
 - 52W高/低: {d.get('fiftyTwoWeekHigh','N/A')} / {d.get('fiftyTwoWeekLow','N/A')}
 - 分析師目標價: {d.get('targetMeanPrice','N/A')}  |  評等: {d.get('recommendationKey','N/A')}
 - YoY營收成長: {(d.get('revenueGrowth') or 0)*100:.1f}%
@@ -393,6 +432,7 @@ def build_prompt(ticker, market, d):
   "ticker": "{ticker}",
   "market": "{'TW' if is_tw else 'US'}",
   "currency": "{'TWD' if is_tw else 'USD'}",
+  "confidence_score": 85,
   "current_price": {cur_price},
   "market_status_summary": "一句話精準描述目前市場熱度與產業拐點",
   "report_date": "{datetime.now().strftime('%Y-%m-%d')}",
@@ -457,6 +497,8 @@ def build_prompt(ticker, market, d):
       "wacc": 9.5,
       "implied_pe": 18.0
     }},
+    "ev_ebitda_analysis": "EV/EBITDA估值法分析：當前EV/EBITDA倍數與同業比較，結合DCF與P/E給出三法加權目標價推演，至少100字",
+    "weighted_target": 185.50,
     "valuation_verdict": "FAIR",
     "rerating_catalyst": "重新估值機會與催化劑",
     "pe_band_data": {{

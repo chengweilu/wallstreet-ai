@@ -778,6 +778,7 @@ body{
         <div class="metric-item"><div class="metric-label">護城河評分</div><div class="metric-value amber" id="m-moat">-- / 10</div><div class="metric-sub">競爭壁壘</div></div>
         <div class="metric-item"><div class="metric-label">財務體質</div><div class="metric-value" id="m-health">--</div><div class="metric-sub">綜合評估</div></div>
         <div class="metric-item"><div class="metric-label">估值狀態</div><div class="metric-value" id="m-valuation">--</div><div class="metric-sub">DCF比較</div></div>
+        <div class="metric-item"><div class="metric-label">分析信心</div><div class="metric-value" id="m-confidence">--</div><div class="metric-sub">數據完整度</div></div>
       </div>
     </div>
     <div class="price-chart-wrap">
@@ -926,6 +927,14 @@ body{
           <div class="card-title">DCF 折現現金流估值</div>
           <div class="card-body" id="s4-dcf">--</div>
           <div id="dcf-assumptions" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px;"></div>
+        </div>
+      </div>
+      <div style="margin-top:20px;" class="card">
+        <div class="card-title">EV/EBITDA 三法加權估值</div>
+        <div class="card-body" id="s4-ev-ebitda">--</div>
+        <div style="margin-top:12px;display:flex;align-items:center;gap:12px;">
+          <span style="font-size:11px;font-weight:600;color:var(--stone-4);letter-spacing:0.06em;text-transform:uppercase;">三法加權目標價</span>
+          <span id="s4-weighted-target" style="font-size:22px;font-weight:800;color:var(--amber-dark);font-family:'Inter',sans-serif;">--</span>
         </div>
       </div>
       <div style="margin-top:20px;" class="card">
@@ -1295,6 +1304,13 @@ function renderReport(d) {
   const valMap = {UNDERVALUED:'🟢 被低估', OVERVALUED:'🔴 被高估', FAIR:'⚪ 合理區間'};
   document.getElementById('m-valuation').textContent = valMap[s4.valuation_verdict] || s4.valuation_verdict || '--';
 
+  const conf = d.confidence_score;
+  const confEl = document.getElementById('m-confidence');
+  if (conf != null) {
+    confEl.textContent = conf + ' / 100';
+    confEl.className = 'metric-value ' + (conf >= 80 ? 'up' : conf >= 50 ? 'amber' : 'down');
+  }
+
   const pe = s4.pe_band_data;
   document.getElementById('m-pe').textContent = pe && pe.current_pe ? Number(pe.current_pe).toFixed(1) + 'x' : '--';
 
@@ -1342,6 +1358,12 @@ function renderReport(d) {
   // Section 4
   document.getElementById('s4-peer-comparison').textContent = s4.peer_comparison || '--';
   document.getElementById('s4-dcf').textContent = s4.dcf_analysis || '--';
+  document.getElementById('s4-ev-ebitda').textContent = s4.ev_ebitda_analysis || '--';
+  if (s4.weighted_target) {
+    const cur2 = d.currency || 'USD';
+    const sym = cur2 === 'TWD' ? 'NT$' : '$';
+    document.getElementById('s4-weighted-target').textContent = sym + Number(s4.weighted_target).toLocaleString('en-US', {maximumFractionDigits: 2});
+  }
 
   const dcfEl = document.getElementById('dcf-assumptions');
   dcfEl.innerHTML = '';
