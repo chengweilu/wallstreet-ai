@@ -666,6 +666,17 @@ body{
   padding:1px 7px;background:var(--amber-pale);color:var(--amber-dark);
   border-radius:10px;font-size:11px;font-weight:700;
 }
+.tech-signal-card{}
+.signal-score-big{
+  font-size:48px;font-weight:900;font-family:'Inter',sans-serif;
+  line-height:1;letter-spacing:-0.02em;margin-bottom:4px;
+}
+.signal-checklist{display:grid;gap:6px;margin-top:16px;}
+.signal-check-item{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--stone-3);}
+.tech-indicator-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:24px;}
+@media(max-width:768px){.tech-indicator-grid{grid-template-columns:1fr;}}
+.tech-val{font-size:22px;font-weight:800;font-family:'Inter',sans-serif;margin-bottom:4px;}
+.tech-sub{font-size:12px;color:var(--stone-4);}
 .skeleton-line{
   height:12px;border-radius:6px;max-width:280px;margin:0 auto;
   background:linear-gradient(90deg,var(--stone-6) 25%,#f0eeea 50%,var(--stone-6) 75%);
@@ -691,6 +702,7 @@ body{
     <a href="#sec6" class="nav-link" data-sec="sec6">情境展望</a>
     <a href="#sec7" class="nav-link" data-sec="sec7">投資策略</a>
     <a href="#sandbox-sec" class="nav-link" data-sec="sandbox-sec">AI 沙盒</a>
+    <a href="#sec8" class="nav-link" data-sec="sec8">技術面</a>
   </div>
   <span class="history-badge-report" id="history-badge-report">🕐 歷史報告</span>
   <span class="nav-ticker" id="nav-ticker-label">--</span>
@@ -1088,6 +1100,34 @@ body{
     </div>
   </div>
 
+  <!-- SECTION 8: TECHNICAL ANALYSIS -->
+  <div class="sec" id="sec8">
+    <div class="section-wrap">
+      <div class="sec-title"><span class="sec-num">8</span>技術面分析</div>
+      <p class="sec-subtitle">均線排列 · RSI 動能 · MACD 趨勢 · 量化信號評分</p>
+
+      <!-- Signal Summary Card -->
+      <div class="card tech-signal-card" id="tech-summary-card">
+        <div class="skeleton-line" style="width:120px;height:16px;margin-bottom:12px;"></div>
+        <div class="skeleton-line" style="width:200px;margin-bottom:8px;"></div>
+        <div class="skeleton-line short"></div>
+      </div>
+
+      <!-- 3 Indicator Cards -->
+      <div class="tech-indicator-grid" id="tech-indicator-grid">
+        <div class="card"><div class="card-title">均線狀態</div><div id="tech-ma" class="card-body"><div class="skeleton-line"></div></div></div>
+        <div class="card"><div class="card-title">RSI（14）</div><div id="tech-rsi" class="card-body"><div class="skeleton-line"></div></div></div>
+        <div class="card"><div class="card-title">MACD</div><div id="tech-macd" class="card-body"><div class="skeleton-line"></div></div></div>
+      </div>
+
+      <!-- MA Overlay Chart -->
+      <div class="chart-card" style="margin-top:24px;">
+        <div class="chart-title">收盤價 × 均線疊加（近90日）</div>
+        <div class="chart-wrap" style="height:280px;"><canvas id="chart-ma-overlay"></canvas></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Footer -->
   <div class="report-footer">
     <div>本報告由 WallStreet AI 系統生成，僅供參考，不構成投資建議。</div>
@@ -1193,6 +1233,13 @@ function resetApp() {
 function destroyCharts() {
   Object.values(charts).forEach(c => { try { c.destroy(); } catch(e){} });
   charts = {};
+  // Reset technical section skeletons
+  const summCard = document.getElementById('tech-summary-card');
+  if (summCard) summCard.innerHTML = '<div class="skeleton-line" style="width:120px;height:16px;margin-bottom:12px;"></div><div class="skeleton-line" style="width:200px;margin-bottom:8px;"></div><div class="skeleton-line short"></div>';
+  ['tech-ma','tech-rsi','tech-macd'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="skeleton-line"></div>';
+  });
 }
 
 // ===== LOADING ANIMATION =====
@@ -1466,6 +1513,9 @@ function renderReport(d) {
 
   // Setup scroll-triggered card animations
   setTimeout(() => initScrollAnimations(), 150);
+
+  // Load technical analysis asynchronously (non-blocking)
+  setTimeout(() => fetchTechnicalAnalysis(d.ticker), 500);
 
   // Scroll to top of report
   window.scrollTo({top: 0, behavior: 'smooth'});
@@ -1947,7 +1997,7 @@ async function fetchHistoryCount() {
 
 // ===== SCROLL OBSERVER =====
 function setupScrollObserver() {
-  const sections = ['sec1','sec2','sec3','sec4','sec5','sec6','sec7','sandbox-sec'];
+  const sections = ['sec1','sec2','sec3','sec4','sec5','sec6','sec7','sandbox-sec','sec8'];
   const observer = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
@@ -1961,6 +2011,93 @@ function setupScrollObserver() {
   sections.forEach(id => {
     const el = document.getElementById(id);
     if (el) observer.observe(el);
+  });
+}
+
+// ===== TECHNICAL ANALYSIS =====
+async function fetchTechnicalAnalysis(ticker) {
+  try {
+    const res = await fetch(`/api/technical/${ticker}`);
+    const json = await res.json();
+    if (json.success) {
+      renderTechnicalSection(json.data);
+    } else {
+      document.getElementById('tech-summary-card').innerHTML = '<div class="card-body" style="color:var(--stone-4)">技術數據暫時無法取得</div>';
+    }
+  } catch(e) {
+    document.getElementById('tech-summary-card').innerHTML = '<div class="card-body" style="color:var(--stone-4)">技術數據暫時無法取得</div>';
+  }
+}
+
+function renderTechnicalSection(t) {
+  const scoreColor = t.signal_score >= 80 ? 'var(--green)' : t.signal_score >= 60 ? 'var(--amber)' : t.signal_score >= 40 ? 'var(--stone-4)' : 'var(--red)';
+  const condLabels = {
+    price_above_ma200: '股價 > MA200（長期多頭）',
+    golden_cross: 'MA50 > MA200（黃金交叉）',
+    price_above_ma50: '股價 > MA50（中期強勢）',
+    rsi_healthy: 'RSI 在 40–70 健康區間',
+    macd_bullish: 'MACD > Signal（動能向上）',
+  };
+  const checks = Object.entries(t.conditions).map(([k, v]) =>
+    `<div class="signal-check-item"><span style="font-size:16px">${v ? '✅' : '❌'}</span><span>${condLabels[k] || k}</span></div>`
+  ).join('');
+
+  document.getElementById('tech-summary-card').innerHTML = `
+    <div style="display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap;">
+      <div>
+        <div class="card-title">技術面綜合評分</div>
+        <div class="signal-score-big" style="color:${scoreColor}">${t.signal_score}</div>
+        <div style="font-size:13px;font-weight:700;color:${scoreColor}">${t.signal_label}</div>
+      </div>
+      <div class="signal-checklist" style="flex:1;min-width:200px;">${checks}</div>
+    </div>`;
+
+  // MA indicators
+  const fmtP = n => n != null ? Number(n).toLocaleString('en-US', {maximumFractionDigits:2}) : 'N/A';
+  const maColor = (ma) => !ma ? '' : t.last_close > ma ? 'up' : 'down';
+  document.getElementById('tech-ma').innerHTML = `
+    <div class="tech-val ${maColor(t.ma20)}">MA20: ${fmtP(t.ma20)}</div>
+    <div class="tech-val ${maColor(t.ma50)}" style="font-size:18px">MA50: ${fmtP(t.ma50)}</div>
+    <div class="tech-val ${maColor(t.ma200)}" style="font-size:18px">MA200: ${fmtP(t.ma200)}</div>
+    <div class="tech-sub">現價 ${fmtP(t.last_close)}</div>`;
+
+  const rsiColor = t.rsi >= 70 ? 'down' : t.rsi <= 30 ? 'up' : 'amber';
+  const rsiLabel = t.rsi >= 70 ? '超買區' : t.rsi <= 30 ? '超賣區' : '健康區間';
+  document.getElementById('tech-rsi').innerHTML = `
+    <div class="tech-val ${rsiColor}">${t.rsi.toFixed(1)}</div>
+    <div class="tech-sub">${rsiLabel}</div>`;
+
+  const macdColor = t.macd > t.macd_signal ? 'up' : 'down';
+  const macdLabel = t.macd > t.macd_signal ? '多頭排列' : '空頭排列';
+  document.getElementById('tech-macd').innerHTML = `
+    <div class="tech-val ${macdColor}">${t.macd.toFixed(3)}</div>
+    <div class="tech-sub">Signal: ${t.macd_signal.toFixed(3)} · ${macdLabel}</div>`;
+
+  // MA overlay chart
+  if (charts['ma-overlay']) { try { charts['ma-overlay'].destroy(); } catch(e){} }
+  const ctx = document.getElementById('chart-ma-overlay').getContext('2d');
+  const labels = t.price_with_ma.map(p => p.date.slice(5));
+  const mk = (arr, color, label, dash=[]) => ({
+    label, data: arr, borderColor: color, backgroundColor: 'transparent',
+    borderWidth: dash.length ? 1.5 : 2, borderDash: dash,
+    pointRadius: 0, tension: 0.3,
+  });
+  charts['ma-overlay'] = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [
+      mk(t.price_with_ma.map(p=>p.close), 'rgba(255,255,255,0.7)', '收盤價'),
+      mk(t.price_with_ma.map(p=>p.ma20), '#d97706', 'MA20'),
+      mk(t.price_with_ma.map(p=>p.ma50), '#4ade80', 'MA50', [4,2]),
+      mk(t.price_with_ma.map(p=>p.ma200), '#f87171', 'MA200', [8,3]),
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: 'var(--stone-3)', font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { color: 'var(--stone-4)', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } },
+        y: { ticks: { color: 'var(--stone-4)', font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } },
+      },
+    },
   });
 }
 

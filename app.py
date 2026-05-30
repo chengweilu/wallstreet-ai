@@ -667,6 +667,100 @@ def analyze():
         return jsonify({'error': f'分析失敗：{str(e)}'}), 500
 
 
+def calc_technical_indicators(yf_ticker):
+    import pandas as pd
+    stock = yf.Ticker(yf_ticker)
+    hist = _yf_retry(lambda: stock.history(period="6mo", interval="1d"))
+    if hist.empty or len(hist) < 20:
+        raise ValueError("數據不足")
+
+    close = hist['Close']
+
+    ma20 = close.rolling(20).mean()
+    ma50 = close.rolling(50).mean()
+    ma200 = close.rolling(200).mean()
+
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
+    rs = gain / loss.replace(0, float('nan'))
+    rsi = (100 - 100 / (1 + rs)).iloc[-1]
+
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    macd_hist = macd_line - signal_line
+
+    last_close = float(close.iloc[-1])
+    last_ma20 = float(ma20.iloc[-1]) if not pd.isna(ma20.iloc[-1]) else None
+    last_ma50 = float(ma50.iloc[-1]) if not pd.isna(ma50.iloc[-1]) else None
+    last_ma200 = float(ma200.iloc[-1]) if not pd.isna(ma200.iloc[-1]) else None
+    last_macd = float(macd_line.iloc[-1])
+    last_signal = float(signal_line.iloc[-1])
+    last_hist = float(macd_hist.iloc[-1])
+    last_rsi = float(rsi) if not pd.isna(rsi) else 50.0
+
+    score = 0
+    conditions = {}
+    conditions['price_above_ma200'] = bool(last_ma200 and last_close > last_ma200)
+    conditions['golden_cross'] = bool(last_ma50 and last_ma200 and last_ma50 > last_ma200)
+    conditions['price_above_ma50'] = bool(last_ma50 and last_close > last_ma50)
+    conditions['rsi_healthy'] = bool(40 <= last_rsi <= 70)
+    conditions['macd_bullish'] = bool(last_macd > last_signal)
+    weights = {'price_above_ma200': 25, 'golden_cross': 20, 'price_above_ma50': 15, 'rsi_healthy': 20, 'macd_bullish': 20}
+    score = sum(weights[k] for k, v in conditions.items() if v)
+
+    if score >= 80:
+        label = '強烈多頭'
+    elif score >= 60:
+        label = '偏多'
+    elif score >= 40:
+        label = '中性'
+    elif score >= 20:
+        label = '偏空'
+    else:
+        label = '強烈空頭'
+
+    tail = hist.tail(90)
+    price_with_ma = []
+    for idx, row in tail.iterrows():
+        date_str = str(idx.date())
+        i = hist.index.get_loc(idx)
+        price_with_ma.append({
+            'date': date_str,
+            'close': round(float(row['Close']), 2),
+            'ma20': round(float(ma20.iloc[i]), 2) if not pd.isna(ma20.iloc[i]) else None,
+            'ma50': round(float(ma50.iloc[i]), 2) if not pd.isna(ma50.iloc[i]) else None,
+            'ma200': round(float(ma200.iloc[i]), 2) if not pd.isna(ma200.iloc[i]) else None,
+        })
+
+    return {
+        'ma20': round(last_ma20, 2) if last_ma20 else None,
+        'ma50': round(last_ma50, 2) if last_ma50 else None,
+        'ma200': round(last_ma200, 2) if last_ma200 else None,
+        'rsi': round(last_rsi, 1),
+        'macd': round(last_macd, 4),
+        'macd_signal': round(last_signal, 4),
+        'macd_hist': round(last_hist, 4),
+        'signal_score': score,
+        'signal_label': label,
+        'conditions': conditions,
+        'price_with_ma': price_with_ma,
+        'last_close': round(last_close, 2),
+    }
+
+
+@app.route('/api/technical/<ticker>')
+def get_technical(ticker):
+    try:
+        _, yf_ticker = detect_market(ticker.strip().upper())
+        data = calc_technical_indicators(yf_ticker)
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @app.route('/api/history', methods=['GET'])
 def list_history():
     ticker_filter = request.args.get('ticker', '').strip().upper()
